@@ -80,7 +80,7 @@ async function handler(req, res) {
     };
 
     const response = await fetch(
-      `https://speech.googleapis.com/v1/speech:recognize?key=${process.env.GOOGLE_CLOUD_API_KEY}`,
+      `https://speech.googleapis.com/v1/speech:recognize?key=${process.env.NEXT_PUBLIC_GOOGLE_CLOUD_API_KEY}`,
       {
         method: "POST",
         headers: {
