@@ -35,6 +35,8 @@ export const config = {
   },
 };
 
+const possibleSampleRates = [16000, 48000, 44100, 32000];
+
 async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -51,66 +53,83 @@ async function handler(req, res) {
     const filePath = file.path;
     const fileType = file.mimetype;
 
-    if (!fileType) {
-      return res.status(400).json({ error: "Invalid file structure" });
-    }
-
     const encoding =
-      fileType === "audio/wav"
-        ? "LINEAR16"
-        : fileType === "audio/mpeg" || fileType === "audio/mp3"
-        ? "MP3"
-        : null;
+      fileType === "audio/wav" ? "LINEAR16" :
+      fileType === "audio/mpeg" || fileType === "audio/mp3" ? "MP3" :
+      fileType === "audio/webm" ? "WEBM_OPUS" :
+      null;
 
     if (!encoding) {
-      return res.status(400).json({ error: "Unsupported audio format" });
+      return res.status(400).json({ 
+        error: "Unsupported audio format", 
+        fileType: fileType 
+      });
     }
 
     const audioContent = fs.readFileSync(filePath, { encoding: "base64" });
 
-    const requestBody = {
-      config: {
-        encoding,
-        sampleRateHertz: 16000,
-        languageCode: "en-US",
-      },
-      audio: {
-        content: audioContent,
-      },
-    };
+    // Try transcription with different sample rates
+    for (const sampleRate of possibleSampleRates) {
+      try {
+        const requestBody = {
+          config: {
+            encoding,
+            sampleRateHertz: sampleRate,
+            languageCode: "en-US",
+          },
+          audio: {
+            content: audioContent,
+          },
+        };
 
-    const response = await fetch(
-      `https://speech.googleapis.com/v1/speech:recognize?key=${process.env.NEXT_PUBLIC_GOOGLE_CLOUD_API_KEY}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
+        const response = await fetch(
+          `https://speech.googleapis.com/v1/speech:recognize?key=${process.env.NEXT_PUBLIC_GOOGLE_CLOUD_API_KEY}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.log(`Attempt with ${sampleRate} Hz failed:`, errorData);
+          continue; // Try next sample rate
+        }
+
+        const data = await response.json();
+        const transcription = data.results
+          ?.map((result) => result.alternatives?.[0]?.transcript)
+          .join("\n");
+
+        // If transcription is successful, return it
+        if (transcription) {
+          // Cleanup: Delete temporary file after processing
+          fs.unlinkSync(filePath);
+
+          return res.status(200).json({ 
+            transcription,
+            sampleRate: sampleRate // Optional: return which sample rate worked
+          });
+        }
+      } catch (rateError) {
+        console.log(`Error with sample rate ${sampleRate}:`, rateError);
+        continue;
       }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error("Google API Error:", errorData);
-      return res.status(response.status).json({
-        error: errorData.error?.message || "Failed to transcribe audio",
-      });
     }
 
-    const data = await response.json();
-    const transcription = data.results
-      ?.map((result) => result.alternatives?.[0]?.transcript)
-      .join("\n");
+    // If no sample rate worked
+    return res.status(400).json({ 
+      error: "Could not transcribe audio with any sample rate" 
+    });
 
-    // Cleanup: Delete temporary file after processing
-    fs.unlinkSync(filePath);
-
-    return res.status(200).json({ transcription });
   } catch (error) {
-    console.error("Error during transcription:", error.message || error);
+    console.error("Error during transcription:", error);
     return res.status(500).json({
       error: "An unexpected error occurred during transcription",
+      details: error.message
     });
   }
 }

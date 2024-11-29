@@ -11,20 +11,27 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+
+  // Refs for various elements
   const mediaRecorderRef = useRef(null);
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
   const excelFileInputRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
+  // Initialize audio notification
   useEffect(() => {
     audioRef.current = new Audio("/msg-popup.mp3");
   }, []);
 
+  // Message handling
   const addMessage = (text, type) => {
     const newMessage = { id: Date.now(), text, type };
     setMessages((prev) => [...prev, newMessage]);
   };
 
+  // Text message submission
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (input.trim() && !isProcessing) {
@@ -34,6 +41,7 @@ export default function Home() {
     }
   };
 
+  // Handle Enter key for submission
   const handleKeyPress = async (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -41,6 +49,7 @@ export default function Home() {
     }
   };
 
+  // Fetch AI response
   const fetchResponse = async (userInput) => {
     setIsProcessing(true);
     addMessage("WATAD Copilot is Typing...", "assistant");
@@ -48,7 +57,7 @@ export default function Home() {
       const { data } = await axios.post("/api/chat", { userMessage: userInput });
       setMessages((prev) => prev.filter((msg) => msg.text !== "WATAD Copilot is Typing..."));
       addMessage(data.response, "assistant");
-      audioRef.current.play();
+      audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
       addMessage("Sorry - Something went wrong. Please try again!", "assistant");
@@ -57,37 +66,58 @@ export default function Home() {
     }
   };
 
-  // Existing audio-related methods (startRecording, stopRecording, handleFileUpload, handleAudioUpload)
+  // Start audio recording
   const startRecording = async () => {
     if (!isProcessing) {
       try {
         setIsProcessing(true);
+        setIsRecording(true);
+        
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        const chunks = [];
-
-        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-          const audioBlob = new Blob(chunks, { type: "audio/wav" });
-          await handleAudioUpload(audioBlob);
+        
+        const mediaRecorder = new MediaRecorder(stream, { 
+          mimeType: 'audio/webm; codecs=opus'
+        });
+  
+        audioChunksRef.current = [];
+  
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
         };
-
+  
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunksRef.current, { 
+            type: 'audio/webm; codecs=opus'
+          });
+          
+          handleAudioUpload(audioBlob);
+          
+          stream.getTracks().forEach(track => track.stop());
+        };
+  
         mediaRecorder.start();
+        mediaRecorderRef.current = mediaRecorder;
       } catch (err) {
-        setError("Failed to access the microphone.");
+        console.error("Recording error:", err);
+        setError(`Microphone access failed: ${err.message}`);
         setIsProcessing(false);
+        setIsRecording(false);
       }
     }
   };
 
+  // Stop audio recording
   const stopRecording = () => {
-    if (mediaRecorderRef.current) {
+    if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      setIsProcessing(true);
     }
-    setIsProcessing(false);
   };
 
+  // Handle audio file upload
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -96,6 +126,8 @@ export default function Home() {
     }
   };
 
+  // Upload and process audio
+  // In your frontend code
   const handleAudioUpload = async (audioData) => {
     setLoading(true);
     setError("");
@@ -103,25 +135,39 @@ export default function Home() {
 
     try {
       const formData = new FormData();
-      formData.append("audio", audioData);
+      // Ensure file extension matches mime type
+      formData.append("audio", audioData, 'recording.opus');
 
-      const { data } = await axios.post("/api/transcribe", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+      console.log('Uploading Audio:', {
+        type: audioData.type,
+        size: audioData.size
       });
 
-      setTranscription(data.transcription);
-      addMessage(data.transcription, "user");
-      await fetchResponse(data.transcription);
+      const { data } = await axios.post("/api/transcribe", formData, {
+        headers: { 
+          "Content-Type": "multipart/form-data" 
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
+      });
+
+      if (data.transcription) {
+        setTranscription(data.transcription);
+        addMessage(data.transcription, "user");
+        await fetchResponse(data.transcription);
+      } else {
+        throw new Error("No transcription received");
+      }
     } catch (err) {
-      setError("Failed to process the audio.");
-      console.error("Error:", err);
+      console.error("Full upload error:", err.response?.data || err);
+      setError(`Failed to process the audio: ${err.response?.data?.error || err.message}`);
     } finally {
       setLoading(false);
       setIsProcessing(false);
     }
   };
 
-  // New method for Excel file upload and text extraction
+  // Excel file upload and text extraction
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -216,14 +262,14 @@ export default function Home() {
             }`}
             disabled={isProcessing}
           >
-            Start Recording
+            {isRecording ? "Recording..." : "Start Recording"}
           </button>
           <button
             onClick={stopRecording}
             className={`px-3 py-2 rounded text-sm ${
-              isProcessing ? "bg-gray-300 text-gray-500" : "bg-red-500 text-white"
+              isRecording ? "bg-red-500 text-white" : "bg-gray-300 text-gray-500"
             }`}
-            disabled={isProcessing}
+            disabled={!isRecording}
           >
             Stop Recording
           </button>
