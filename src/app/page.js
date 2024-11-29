@@ -2,36 +2,33 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
-import * as XLSX from 'xlsx';
+import * as XLSX from "xlsx";
 
 export default function Home() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [transcription, setTranscription] = useState("");
   const [loading, setLoading] = useState(false);
+  const [tableData, setTableData] = useState([]);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
 
-  // Refs for various elements
   const mediaRecorderRef = useRef(null);
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
   const excelFileInputRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // Initialize audio notification
   useEffect(() => {
     audioRef.current = new Audio("/msg-popup.mp3");
   }, []);
 
-  // Message handling
   const addMessage = (text, type) => {
     const newMessage = { id: Date.now(), text, type };
     setMessages((prev) => [...prev, newMessage]);
   };
 
-  // Text message submission
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (input.trim() && !isProcessing) {
@@ -41,7 +38,6 @@ export default function Home() {
     }
   };
 
-  // Handle Enter key for submission
   const handleKeyPress = async (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -49,54 +45,61 @@ export default function Home() {
     }
   };
 
-  // Fetch AI response
   const fetchResponse = async (userInput) => {
     setIsProcessing(true);
     addMessage("WATAD Copilot is Typing...", "assistant");
     try {
-      const { data } = await axios.post("/api/chat", { userMessage: userInput });
-      setMessages((prev) => prev.filter((msg) => msg.text !== "WATAD Copilot is Typing..."));
+      const { data } = await axios.post("/api/chat", {
+        userMessage: userInput,
+      });
+      setMessages((prev) =>
+        prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
+      );
       addMessage(data.response, "assistant");
       audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
-      addMessage("Sorry - Something went wrong. Please try again!", "assistant");
+      addMessage(
+        "Sorry - Something went wrong. Please try again!",
+        "assistant"
+      );
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Start audio recording
   const startRecording = async () => {
     if (!isProcessing) {
       try {
         setIsProcessing(true);
         setIsRecording(true);
-        
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        const mediaRecorder = new MediaRecorder(stream, { 
-          mimeType: 'audio/webm; codecs=opus'
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
         });
-  
+
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: "audio/webm; codecs=opus",
+        });
+
         audioChunksRef.current = [];
-  
+
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
             audioChunksRef.current.push(event.data);
           }
         };
-  
+
         mediaRecorder.onstop = () => {
-          const audioBlob = new Blob(audioChunksRef.current, { 
-            type: 'audio/webm; codecs=opus'
+          const audioBlob = new Blob(audioChunksRef.current, {
+            type: "audio/webm; codecs=opus",
           });
-          
+
           handleAudioUpload(audioBlob);
-          
-          stream.getTracks().forEach(track => track.stop());
+
+          stream.getTracks().forEach((track) => track.stop());
         };
-  
+
         mediaRecorder.start();
         mediaRecorderRef.current = mediaRecorder;
       } catch (err) {
@@ -108,7 +111,6 @@ export default function Home() {
     }
   };
 
-  // Stop audio recording
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -117,7 +119,6 @@ export default function Home() {
     }
   };
 
-  // Handle audio file upload
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -126,8 +127,6 @@ export default function Home() {
     }
   };
 
-  // Upload and process audio
-  // In your frontend code
   const handleAudioUpload = async (audioData) => {
     setLoading(true);
     setError("");
@@ -135,20 +134,19 @@ export default function Home() {
 
     try {
       const formData = new FormData();
-      // Ensure file extension matches mime type
-      formData.append("audio", audioData, 'recording.opus');
+      formData.append("audio", audioData, "recording.opus");
 
-      console.log('Uploading Audio:', {
+      console.log("Uploading Audio:", {
         type: audioData.type,
-        size: audioData.size
+        size: audioData.size,
       });
 
       const { data } = await axios.post("/api/transcribe", formData, {
-        headers: { 
-          "Content-Type": "multipart/form-data" 
+        headers: {
+          "Content-Type": "multipart/form-data",
         },
         maxContentLength: Infinity,
-        maxBodyLength: Infinity
+        maxBodyLength: Infinity,
       });
 
       if (data.transcription) {
@@ -160,14 +158,17 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Full upload error:", err.response?.data || err);
-      setError(`Failed to process the audio: ${err.response?.data?.error || err.message}`);
+      setError(
+        `Failed to process the audio: ${
+          err.response?.data?.error || err.message
+        }`
+      );
     } finally {
       setLoading(false);
       setIsProcessing(false);
     }
   };
 
-  // Excel file upload and text extraction
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -176,13 +177,15 @@ export default function Home() {
       setError("");
 
       try {
-        const extractedText = await extractTextFromExcel(file);
-        
-        if (extractedText) {
-          // Add extracted text as a user message
+        const extractedData = await extractTableDataFromExcel(file);
+
+        if (extractedData) {
+          setTableData(extractedData);
+
+          const extractedText = extractedData
+            .map((row) => row.join(" | "))
+            .join("\n");
           addMessage(extractedText, "user");
-          
-          // Initiate conversation with extracted text
           await fetchResponse(extractedText);
         }
       } catch (err) {
@@ -195,32 +198,25 @@ export default function Home() {
     }
   };
 
-  // Text extraction from Excel
-  const extractTextFromExcel = (file) => {
+  const extractTableDataFromExcel = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
-          const workbook = XLSX.read(e.target.result, { type: 'binary' });
-          let fullText = '';
+          const workbook = XLSX.read(e.target.result, { type: "binary" });
+          let tableData = [];
 
           workbook.SheetNames.forEach((sheetName) => {
             const worksheet = workbook.Sheets[sheetName];
-            const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-            
-            // Convert each row to a string representation
-            sheetData.forEach(row => {
-              const rowText = row.map(cell => 
-                cell !== undefined ? String(cell).trim() : ''
-              ).join(' | ');
-              
-              fullText += rowText + '\n';
+            const sheetData = XLSX.utils.sheet_to_json(worksheet, {
+              header: 1,
             });
+            tableData = tableData.concat(sheetData);
           });
 
-          resolve(fullText.trim());
+          resolve(tableData);
         } catch (error) {
-          console.error('Error extracting text from Excel:', error);
+          console.error("Error extracting table data from Excel:", error);
           reject(error);
         }
       };
@@ -229,7 +225,7 @@ export default function Home() {
   };
 
   return (
-    <main className="fixed h-full w-full bg-gray-100 flex flex-col">
+    <main className="fixed h-full w-full bg-gray-50 flex flex-col">
       <header className="bg-black text-white p-4 text-center">
         <h1 className="text-2xl font-bold">WATAD Copilot</h1>
       </header>
@@ -237,11 +233,25 @@ export default function Home() {
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`mb-2 p-2 rounded-lg ${
-              msg.type === "user" ? "bg-gray-300 text-right" : "bg-gray-100 text-left"
+            className={`flex mb-4 ${
+              msg.type === "user" ? "justify-end" : "justify-start"
             }`}
           >
-            {msg.text}
+            <div
+              className={`max-w-[80%] p-3 rounded-lg shadow-sm ${
+                msg.type === "user"
+                  ? "bg-blue-500 text-white rounded-br-none"
+                  : "bg-white text-gray-800 border rounded-bl-none"
+              }`}
+            >
+              {msg.text === "WATAD Copilot is Typing..." ? (
+                <div className="animate-pulse text-gray-500 italic">
+                  WATAD Copilot is Typing...
+                </div>
+              ) : (
+                <p className="text-sm leading-relaxed">{msg.text}</p>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -258,7 +268,9 @@ export default function Home() {
           <button
             onClick={startRecording}
             className={`px-3 py-2 rounded text-sm ${
-              isProcessing ? "bg-gray-300 text-gray-500" : "bg-blue-500 text-white"
+              isProcessing
+                ? "bg-gray-300 text-gray-500"
+                : "bg-blue-500 text-white"
             }`}
             disabled={isProcessing}
           >
@@ -267,55 +279,37 @@ export default function Home() {
           <button
             onClick={stopRecording}
             className={`px-3 py-2 rounded text-sm ${
-              isRecording ? "bg-red-500 text-white" : "bg-gray-300 text-gray-500"
+              isRecording
+                ? "bg-red-500 text-white"
+                : "bg-gray-300 text-gray-500"
             }`}
             disabled={!isRecording}
           >
             Stop Recording
           </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className={`px-3 py-2 rounded text-sm ${
-              isProcessing ? "bg-gray-300 text-gray-500" : "bg-gray-500 text-white"
-            }`}
-            disabled={isProcessing}
-          >
+          <label className="px-3 py-2 rounded bg-yellow-500 text-white text-sm">
             Upload Audio
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleFileUpload}
-            accept="audio/*"
-          />
-          <button
-            onClick={() => excelFileInputRef.current?.click()}
-            className={`px-3 py-2 rounded text-sm ${
-              isProcessing ? "bg-gray-300 text-gray-500" : "bg-green-500 text-white"
-            }`}
-            disabled={isProcessing}
-          >
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={handleFileUpload}
+              disabled={loading || isProcessing}
+              className="hidden"
+              ref={fileInputRef}
+            />
+          </label>
+          <label className="px-3 py-2 rounded bg-green-500 text-white text-sm">
             Upload Excel
-          </button>
-          <input
-            ref={excelFileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleExcelUpload}
-            accept=".xlsx,.xls,.csv"
-          />
-          <button
-            onClick={handleSubmit}
-            className={`px-3 py-2 rounded text-sm ${
-              !input.trim() || isProcessing ? "bg-gray-300 text-gray-500" : "bg-black text-white"
-            }`}
-            disabled={!input.trim() || isProcessing}
-          >
-            Send
-          </button>
+            <input
+              type="file"
+              accept=".xls,.xlsx"
+              onChange={handleExcelUpload}
+              disabled={loading || isProcessing}
+              className="hidden"
+              ref={excelFileInputRef}
+            />
+          </label>
         </div>
-        {error && <div className="mt-2 text-red-600">{error}</div>}
       </footer>
     </main>
   );
