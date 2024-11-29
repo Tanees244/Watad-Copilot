@@ -55,7 +55,7 @@ export default function Home() {
       setMessages((prev) =>
         prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
       );
-      addMessage(data.response, "assistant");
+      addMessage(formatBotResponse(data.response), "assistant");
       audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
@@ -169,6 +169,17 @@ export default function Home() {
     }
   };
 
+  // Format the response text with proper headings and newlines
+  const formatBotResponse = (responseText) => {
+    // Make text between ** and ** bold
+    return responseText
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") // Bold text wrapped in **
+      .replace(/\n/g, "<br/>") // Replace newlines with <br/> for HTML line breaks
+      .replace(/(Type:)/g, "<strong>$1</strong>") // Bold 'Type' label
+      .replace(/(Properties:)/g, "<strong>$1</strong>"); // Bold 'Properties' label
+  };
+
+  // New method for Excel file upload and text extraction
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -177,15 +188,16 @@ export default function Home() {
       setError("");
 
       try {
-        const extractedData = await extractTableDataFromExcel(file);
+        const extractedText = await extractTextFromExcel(file);
 
-        if (extractedData) {
-          setTableData(extractedData);
+        if (extractedText) {
+          // Convert the extracted text into an HTML table and add it as a message
+          const tableHTML = convertTextToTable(extractedText);
 
-          const extractedText = extractedData
-            .map((row) => row.join(" | "))
-            .join("\n");
-          addMessage(extractedText, "user");
+          // Add the table as a user message
+          addMessage(tableHTML, "user");
+
+          // Initiate conversation with extracted text
           await fetchResponse(extractedText);
         }
       } catch (err) {
@@ -198,25 +210,60 @@ export default function Home() {
     }
   };
 
-  const extractTableDataFromExcel = (file) => {
+  // Convert the extracted Excel data into an HTML table
+  const convertTextToTable = (text) => {
+    const rows = text.split("\n").map((row) => row.split(" | ")); // Assuming data is separated by ' | ' in each row
+
+    let tableHTML =
+      "<table class='table-auto w-full border-collapse border border-gray-300'><thead><tr>";
+
+    // Create table headers (first row)
+    rows[0].forEach((cell) => {
+      tableHTML += `<th class='border px-4 py-2 bg-gray-200'>${cell}</th>`;
+    });
+    tableHTML += "</tr></thead><tbody>";
+
+    // Create table rows
+    rows.slice(1).forEach((row) => {
+      tableHTML += "<tr>";
+      row.forEach((cell) => {
+        tableHTML += `<td class='border px-4 py-2'>${cell}</td>`;
+      });
+      tableHTML += "</tr>";
+    });
+
+    tableHTML += "</tbody></table>";
+    return tableHTML;
+  };
+
+  // Text extraction from Excel
+  const extractTextFromExcel = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
           const workbook = XLSX.read(e.target.result, { type: "binary" });
-          let tableData = [];
+          let fullText = "";
 
           workbook.SheetNames.forEach((sheetName) => {
             const worksheet = workbook.Sheets[sheetName];
             const sheetData = XLSX.utils.sheet_to_json(worksheet, {
               header: 1,
             });
-            tableData = tableData.concat(sheetData);
+
+            // Convert each row to a string representation
+            sheetData.forEach((row) => {
+              const rowText = row
+                .map((cell) => (cell !== undefined ? String(cell).trim() : ""))
+                .join(" | ");
+
+              fullText += rowText + "\n";
+            });
           });
 
-          resolve(tableData);
+          resolve(fullText.trim());
         } catch (error) {
-          console.error("Error extracting table data from Excel:", error);
+          console.error("Error extracting text from Excel:", error);
           reject(error);
         }
       };
@@ -243,18 +290,12 @@ export default function Home() {
                   ? "bg-blue-500 text-white rounded-br-none"
                   : "bg-white text-gray-800 border rounded-bl-none"
               }`}
-            >
-              {msg.text === "WATAD Copilot is Typing..." ? (
-                <div className="animate-pulse text-gray-500 italic">
-                  WATAD Copilot is Typing...
-                </div>
-              ) : (
-                <p className="text-sm leading-relaxed">{msg.text}</p>
-              )}
-            </div>
+              dangerouslySetInnerHTML={{ __html: msg.text }}
+            />
           </div>
         ))}
       </div>
+
       <footer className="p-4 bg-gray-200">
         <textarea
           className="w-full mb-2 p-3 border rounded resize-none"
@@ -287,7 +328,7 @@ export default function Home() {
           >
             Stop Recording
           </button>
-          <label className="px-3 py-2 rounded bg-yellow-500 text-white text-sm">
+          <label className="px-3 py-3 rounded bg-yellow-500 text-white text-sm">
             Upload Audio
             <input
               type="file"
@@ -298,17 +339,35 @@ export default function Home() {
               ref={fileInputRef}
             />
           </label>
-          <label className="px-3 py-2 rounded bg-green-500 text-white text-sm">
+          <button
+            onClick={() => excelFileInputRef.current?.click()}
+            className={`px-3 py-2 rounded text-sm ${
+              isProcessing
+                ? "bg-gray-300 text-gray-500"
+                : "bg-green-500 text-white"
+            }`}
+            disabled={isProcessing}
+          >
             Upload Excel
-            <input
-              type="file"
-              accept=".xls,.xlsx"
-              onChange={handleExcelUpload}
-              disabled={loading || isProcessing}
-              className="hidden"
-              ref={excelFileInputRef}
-            />
-          </label>
+          </button>
+          <input
+            ref={excelFileInputRef}
+            type="file"
+            className="hidden"
+            onChange={handleExcelUpload}
+            accept=".xlsx,.xls"
+          />
+          <button
+            onClick={handleSubmit}
+            className={`px-4 py-2 rounded text-white text-sm ${
+              isProcessing || loading
+                ? "bg-gray-300 text-gray-500"
+                : "bg-blue-500"
+            }`}
+            disabled={isProcessing || loading}
+          >
+            Send
+          </button>
         </div>
       </footer>
     </main>

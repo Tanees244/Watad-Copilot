@@ -2363,6 +2363,7 @@ export default async function handler(req, res) {
 
       const responseText = result.response.text().trim();
 
+      // Sending the formatted response back
       res.status(200).json({ response: responseText });
     } catch (error) {
       console.error("Error fetching response:", error);
