@@ -1,3 +1,4 @@
+//src/app/page.js
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
@@ -19,6 +20,25 @@ export default function Home() {
   const fileInputRef = useRef(null);
   const excelFileInputRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Autoscroll effect
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Autofocus effect
+  useEffect(() => {
+    if (!isProcessing) {
+      inputRef.current?.focus();
+    }
+  }, [isProcessing]);
+
+  // Scroll to bottom function
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   useEffect(() => {
     audioRef.current = new Audio("/msg-popup.mp3");
@@ -294,10 +314,12 @@ export default function Home() {
             />
           </div>
         ))}
+        <div ref={messagesEndRef} /> {/* Scroll to bottom anchor */}
       </div>
 
       <footer className="p-4 bg-gray-200">
         <textarea
+          ref={inputRef}
           className="w-full mb-2 p-3 border rounded resize-none"
           placeholder="Type your message..."
           value={input}
