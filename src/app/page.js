@@ -72,10 +72,20 @@ export default function Home() {
       const { data } = await axios.post("/api/chat", {
         userMessage: userInput,
       });
+      
       setMessages((prev) =>
         prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
       );
-      addMessage(formatBotResponse(data.response), "assistant");
+      
+      const response = formatBotResponse(data.response);
+      addMessage(response, "assistant");
+      
+      // Check if response indicates an order is ready for confirmation
+      if (response.includes("Order Summary") && response.includes("Confirm Order")) {
+        const orderData = extractOrderData(response);
+        await createDraftOrder(orderData);
+      }
+      
       audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
@@ -85,6 +95,46 @@ export default function Home() {
       );
     } finally {
       setIsProcessing(false);
+    }
+  };
+  
+  // New helper functions
+  const extractOrderData = (responseText) => {
+    // Implement logic to parse order details from response
+    // This is a placeholder and should be customized based on your specific response format
+    return {
+      product: {
+        title: "Some Product",
+        category: "Construction",
+        subcategory: "Equipment"
+      },
+      quantity: 5,
+      unitOfMeasurement: "units",
+      deliveryDate: new Date(),
+      splitOrder: false,
+      additionalInfo: "Sample order"
+    };
+  };
+  
+  const createDraftOrder = async (orderData) => {
+    try {
+      const { data } = await axios.post("/api/create-order", orderData);
+      
+      // Add a confirmation message
+      addMessage(`Order draft created. Order ID: ${data.orderId}. Would you like to confirm this order?`, "assistant");
+    } catch (error) {
+      console.error("Draft order creation failed:", error);
+      addMessage("Failed to create order draft. Please try again.", "assistant");
+    }
+  };
+  
+  const confirmOrder = async (orderId) => {
+    try {
+      const { data } = await axios.post("/api/confirm-order", { orderId });
+      addMessage(`Order ${orderId} confirmed successfully!`, "assistant");
+    } catch (error) {
+      console.error("Order confirmation failed:", error);
+      addMessage("Order confirmation failed. Please try again.", "assistant");
     }
   };
 

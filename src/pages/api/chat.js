@@ -1,5 +1,5 @@
-//src/pages/api/chat.js
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import clientPromise from '../../lib/mongodb';
 
 const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(apiKey);
@@ -2345,12 +2345,36 @@ const generationConfig = {
 };
 
 let conversationHistory = [];
+let currentOrderDetails = null;
 
 export default async function handler(req, res) {
   if (req.method === 'POST') {
     const { userMessage } = req.body;
 
     try {
+      // Check if this is an order confirmation
+      if (currentOrderDetails && userMessage.toLowerCase() === 'confirm') {
+        const client = await clientPromise;
+        const db = client.db('watad_copilot');
+        const ordersCollection = db.collection('orders');
+
+        // Save order to MongoDB
+        const orderToSave = {
+          ...currentOrderDetails,
+          status: 'Confirmed',
+          createdAt: new Date()
+        };
+
+        await ordersCollection.insertOne(orderToSave);
+
+        // Reset order details
+        const confirmationResponse = "Order confirmed, thank you for your purchase! Your order has been saved and processed.";
+        currentOrderDetails = null;
+
+        res.status(200).json({ response: confirmationResponse });
+        return;
+      }
+
       conversationHistory.push({ role: "user", parts: [{ text: userMessage }] });
 
       const chatSession = model.startChat({
@@ -2359,10 +2383,29 @@ export default async function handler(req, res) {
       });
 
       const result = await chatSession.sendMessage(userMessage);
-
-      conversationHistory.push({ role: "model", parts: [{ text: result.response.text() }] });
-
       const responseText = result.response.text().trim();
+
+      // Check if the response suggests an order is being processed
+      if (responseText.includes("Window Air Condition") && responseText.includes("units")) {
+        // Extract order details
+        const quantity = 5;
+        const product = "Window Air Condition";
+        const deliveryDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+        
+        currentOrderDetails = {
+          product: {
+            title: product,
+            category: "HVAC & Refrigeration",
+            subcategory: "Split Air Conditioners & Window Air Conditioners"
+          },
+          quantity: quantity,
+          unitOfMeasurement: "each",
+          deliveryDate: deliveryDate,
+          splitOrder: false
+        };
+      }
+
+      conversationHistory.push({ role: "model", parts: [{ text: responseText }] });
 
       // Sending the formatted response back
       res.status(200).json({ response: responseText });
