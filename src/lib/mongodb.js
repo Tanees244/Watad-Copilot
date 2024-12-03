@@ -1,6 +1,6 @@
 import { MongoClient } from 'mongodb';
 
-const uri = process.env.MONGODB_URI;
+const uri = process.env.NEXT_PUBLIC_MONGODB_URI;
 const options = {
   useUnifiedTopology: true,
   useNewUrlParser: true,
@@ -9,7 +9,7 @@ const options = {
 let client;
 let clientPromise;
 
-if (!process.env.MONGODB_URI) {
+if (!process.env.NEXT_PUBLIC_MONGODB_URI) {
   throw new Error('Please define the MONGODB_URI environment variable');
 }
 
