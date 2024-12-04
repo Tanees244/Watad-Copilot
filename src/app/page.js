@@ -51,13 +51,41 @@ export default function Home() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (input.trim() && !isProcessing) {
-      addMessage(input, "user");
+    
+    // Trim input and check for order confirmation
+    const trimmedInput = input.trim().toLowerCase();
+    
+    // Check if input is empty or processing is ongoing
+    if (!trimmedInput || isProcessing) return;
+  
+    try {
+      // Add user message to chat
+      addMessage(trimmedInput, "user");
+      
+      // Clear input field
       setInput("");
-      await fetchResponse(input);
+      
+      // Special handling for order confirmation
+      if (trimmedInput === 'confirm order') {
+        await confirmOrder();
+        return;
+      }
+  
+      // Fetch AI response
+      await fetchResponse(trimmedInput);
+    } catch (error) {
+      console.error("Error in message submission:", error);
+      
+      // Add error message to chat
+      addMessage(
+        "Oops! Something went wrong. Please try again.",
+        "system"
+      );
+      
+      // Restore input if needed
+      setInput(trimmedInput);
     }
   };
-
   const handleKeyPress = async (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -72,10 +100,21 @@ export default function Home() {
       const { data } = await axios.post("/api/chat", {
         userMessage: userInput,
       });
+  
+      // Clear typing indicator
       setMessages((prev) =>
         prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
       );
+  
+      // Add bot response
       addMessage(formatBotResponse(data.response), "assistant");
+  
+      // Check if there's a pending order
+      if (data.pendingOrder) {
+        // Optionally add a UI hint about pending order
+        addMessage("An order is pending confirmation. Type 'Confirm Order' to proceed.", "system");
+      }
+  
       audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
@@ -85,6 +124,21 @@ export default function Home() {
       );
     } finally {
       setIsProcessing(false);
+    }
+  };
+  
+  // Add a new function to confirm order
+  const confirmOrder = async () => {
+    try {
+      const { data } = await axios.post("/api/chat", {
+        action: 'confirmOrder'
+      });
+  
+      // Show success message
+      addMessage(`Order confirmed! Order ID: ${data.orderId}`, "system");
+    } catch (err) {
+      console.error("Error confirming order:", err);
+      addMessage("Sorry, there was an issue confirming the order.", "system");
     }
   };
 
