@@ -8,20 +8,48 @@ import * as XLSX from "xlsx";
 export default function Home() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [transcription, setTranscription] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tableData, setTableData] = useState([]);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  
+ // Language state with client-side localStorage handling
+ const [selectedLanguage, setSelectedLanguage] = useState('en-US');
 
-  const mediaRecorderRef = useRef(null);
-  const audioRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const excelFileInputRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
+ // Language options
+ const languageOptions = [
+   { code: "en-US", label: "English (US)" },
+   { code: "ar-SA", label: "Arabic (Saudi Arabia)" }
+ ];
+
+// Effect to save language to localStorage whenever it changes
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('selectedLanguage', selectedLanguage);
+  }
+}, [selectedLanguage]);
+
+// Effect to load language from localStorage on client-side mount
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    const storedLanguage = localStorage.getItem('selectedLanguage');
+    if (storedLanguage) {
+      setSelectedLanguage(storedLanguage);
+    }
+  }
+}, []);
+
+const mediaRecorderRef = useRef(null);
+const audioRef = useRef(null);
+const fileInputRef = useRef(null);
+const excelFileInputRef = useRef(null);
+const audioChunksRef = useRef([]);
+const messagesEndRef = useRef(null);
+const inputRef = useRef(null);
+
+  const prepareStartRecording = () => {
+    startRecording();
+  };
 
   // Autoscroll effect
   useEffect(() => {
@@ -49,14 +77,37 @@ export default function Home() {
     setMessages((prev) => [...prev, newMessage]);
   };
 
+
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (input.trim() && !isProcessing) {
-      addMessage(input, "user");
+    
+    const trimmedInput = input.trim().toLowerCase();
+    
+    if (!trimmedInput || isProcessing) return;
+  
+    try {
+      addMessage(trimmedInput, "user");
+      
       setInput("");
-      await fetchResponse(input);
+      
+      if (trimmedInput === 'confirm order') {
+        await confirmOrder();
+        return;
+      }
+  
+      await fetchResponse(trimmedInput);
+    } catch (error) {
+      console.error("Error in message submission:", error);
+      
+      addMessage(
+        "Oops! Something went wrong. Please try again.",
+        "system"
+      );
+      
+      setInput(trimmedInput);
     }
   };
+
 
   const handleKeyPress = async (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -71,21 +122,19 @@ export default function Home() {
     try {
       const { data } = await axios.post("/api/chat", {
         userMessage: userInput,
+        language: selectedLanguage // Pass selected language to backend
       });
-      
+  
       setMessages((prev) =>
         prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
       );
-      
-      const response = formatBotResponse(data.response);
-      addMessage(response, "assistant");
-      
-      // Check if response indicates an order is ready for confirmation
-      if (response.includes("Order Summary") && response.includes("Confirm Order")) {
-        const orderData = extractOrderData(response);
-        await createDraftOrder(orderData);
+  
+      addMessage(formatBotResponse(data.response), "assistant");
+  
+      if (data.pendingOrder) {
+        addMessage("An order is pending confirmation. Type 'Confirm Order' to proceed.", "system");
       }
-      
+  
       audioRef.current?.play();
     } catch (err) {
       console.error("Error fetching response:", err);
@@ -98,83 +147,79 @@ export default function Home() {
     }
   };
   
-  // New helper functions
-  const extractOrderData = (responseText) => {
-    // Implement logic to parse order details from response
-    // This is a placeholder and should be customized based on your specific response format
-    return {
-      product: {
-        title: "Some Product",
-        category: "Construction",
-        subcategory: "Equipment"
-      },
-      quantity: 5,
-      unitOfMeasurement: "units",
-      deliveryDate: new Date(),
-      splitOrder: false,
-      additionalInfo: "Sample order"
-    };
-  };
-  
-  const createDraftOrder = async (orderData) => {
+  const confirmOrder = async () => {
     try {
-      const { data } = await axios.post("/api/create-order", orderData);
-      
-      // Add a confirmation message
-      addMessage(`Order draft created. Order ID: ${data.orderId}. Would you like to confirm this order?`, "assistant");
-    } catch (error) {
-      console.error("Draft order creation failed:", error);
-      addMessage("Failed to create order draft. Please try again.", "assistant");
-    }
-  };
+      const { data } = await axios.post("/api/chat", {
+        action: 'confirmOrder'
+      });
   
-  const confirmOrder = async (orderId) => {
-    try {
-      const { data } = await axios.post("/api/confirm-order", { orderId });
-      addMessage(`Order ${orderId} confirmed successfully!`, "assistant");
-    } catch (error) {
-      console.error("Order confirmation failed:", error);
-      addMessage("Order confirmation failed. Please try again.", "assistant");
+      addMessage(`Order confirmed! Order ID: ${data.orderId}`, "system");
+    } catch (err) {
+      console.error("Error confirming order:", err);
+      addMessage("Sorry, there was an issue confirming the order.", "system");
     }
   };
 
   const startRecording = async () => {
     if (!isProcessing) {
       try {
+        // Check for microphone permissions
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          addMessage('<span class="text-red-500">Error: Microphone access not supported</span>', "system");
+          return;
+        }
+  
         setIsProcessing(true);
         setIsRecording(true);
-
+        setError("");
+  
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
-
+  
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: "audio/webm; codecs=opus",
         });
-
+  
         audioChunksRef.current = [];
-
+  
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
             audioChunksRef.current.push(event.data);
           }
         };
-
+  
         mediaRecorder.onstop = () => {
           const audioBlob = new Blob(audioChunksRef.current, {
             type: "audio/webm; codecs=opus",
           });
-
-          handleAudioUpload(audioBlob);
-
+  
+          if (audioBlob.size > 0) {
+            handleAudioUpload(audioBlob);
+          } else {
+            addMessage('<span class="text-red-500">No audio recorded. Please try again.</span>', "system");
+          }
+  
           stream.getTracks().forEach((track) => track.stop());
         };
-
+  
         mediaRecorder.start();
         mediaRecorderRef.current = mediaRecorder;
       } catch (err) {
         console.error("Recording error:", err);
-        setError(`Microphone access failed: ${err.message}`);
+        
+        // Detailed error messages based on different scenarios
+        let errorMsg = "Microphone access failed";
+        if (err.name === "NotAllowedError") {
+          errorMsg = "Microphone permission denied. Please check your browser settings.";
+        } else if (err.name === "NotFoundError") {
+          errorMsg = "No microphone found. Please connect a microphone.";
+        }
+  
+        // Add error to chat and error state
+        addMessage(`<span class="text-red-500">Recording Error: ${errorMsg}</span>`, "system");
+        setError(errorMsg);
+        
         setIsProcessing(false);
         setIsRecording(false);
       }
@@ -197,20 +242,23 @@ export default function Home() {
     }
   };
 
+
   const handleAudioUpload = async (audioData) => {
     setLoading(true);
     setError("");
     addMessage("Uploading audio...", "user");
-
+  
     try {
       const formData = new FormData();
       formData.append("audio", audioData, "recording.opus");
-
+      formData.append("language", selectedLanguage);
+  
       console.log("Uploading Audio:", {
         type: audioData.type,
         size: audioData.size,
+        language: selectedLanguage
       });
-
+  
       const { data } = await axios.post("/api/transcribe", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
@@ -218,9 +266,8 @@ export default function Home() {
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
       });
-
+  
       if (data.transcription) {
-        setTranscription(data.transcription);
         addMessage(data.transcription, "user");
         await fetchResponse(data.transcription);
       } else {
@@ -228,28 +275,28 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Full upload error:", err.response?.data || err);
-      setError(
-        `Failed to process the audio: ${
-          err.response?.data?.error || err.message
-        }`
-      );
+      const errorMessage = err.response?.data?.error || err.message || "Unknown error";
+      
+      // Add error message to chat with red color
+      addMessage(`<span class="text-red-500">Audio Upload Error: ${errorMessage}</span>`, "system");
+      
+      // Set more detailed error state
+      setError(errorMessage);
     } finally {
       setLoading(false);
       setIsProcessing(false);
     }
   };
+  
 
-  // Format the response text with proper headings and newlines
   const formatBotResponse = (responseText) => {
-    // Make text between ** and ** bold
     return responseText
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") // Bold text wrapped in **
-      .replace(/\n/g, "<br/>") // Replace newlines with <br/> for HTML line breaks
-      .replace(/(Type:)/g, "<strong>$1</strong>") // Bold 'Type' label
-      .replace(/(Properties:)/g, "<strong>$1</strong>"); // Bold 'Properties' label
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") 
+      .replace(/\n/g, "<br/>")
+      .replace(/(Type:)/g, "<strong>$1</strong>") 
+      .replace(/(Properties:)/g, "<strong>$1</strong>"); 
   };
 
-  // New method for Excel file upload and text extraction
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -261,13 +308,8 @@ export default function Home() {
         const extractedText = await extractTextFromExcel(file);
 
         if (extractedText) {
-          // Convert the extracted text into an HTML table and add it as a message
           const tableHTML = convertTextToTable(extractedText);
-
-          // Add the table as a user message
           addMessage(tableHTML, "user");
-
-          // Initiate conversation with extracted text
           await fetchResponse(extractedText);
         }
       } catch (err) {
@@ -280,20 +322,17 @@ export default function Home() {
     }
   };
 
-  // Convert the extracted Excel data into an HTML table
   const convertTextToTable = (text) => {
-    const rows = text.split("\n").map((row) => row.split(" | ")); // Assuming data is separated by ' | ' in each row
+    const rows = text.split("\n").map((row) => row.split(" | ")); 
 
     let tableHTML =
       "<table class='table-auto w-full border-collapse border border-gray-300'><thead><tr>";
 
-    // Create table headers (first row)
     rows[0].forEach((cell) => {
       tableHTML += `<th class='border px-4 py-2 bg-gray-200'>${cell}</th>`;
     });
     tableHTML += "</tr></thead><tbody>";
 
-    // Create table rows
     rows.slice(1).forEach((row) => {
       tableHTML += "<tr>";
       row.forEach((cell) => {
@@ -306,7 +345,6 @@ export default function Home() {
     return tableHTML;
   };
 
-  // Text extraction from Excel
   const extractTextFromExcel = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -321,7 +359,6 @@ export default function Home() {
               header: 1,
             });
 
-            // Convert each row to a string representation
             sheetData.forEach((row) => {
               const rowText = row
                 .map((cell) => (cell !== undefined ? String(cell).trim() : ""))
@@ -343,9 +380,23 @@ export default function Home() {
 
   return (
     <main className="fixed h-full w-full bg-gray-50 flex flex-col">
-      <header className="bg-black text-white p-4 text-center">
-        <h1 className="text-2xl font-bold">WATAD Copilot</h1>
-      </header>
+    <header className="bg-black text-white p-4 flex justify-between items-center">
+      <h1 className="text-2xl font-bold">WATAD Copilot</h1>
+      <div>
+        <select
+          value={selectedLanguage}
+          onChange={(e) => setSelectedLanguage(e.target.value)}
+          className="px-2 py-1 rounded bg-white text-black"
+        >
+          {languageOptions.map((lang) => (
+            <option key={lang.code} value={lang.code}>
+              {lang.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </header>
+
       <div className="flex-1 overflow-y-auto p-4">
         {messages.map((msg) => (
           <div
@@ -364,7 +415,7 @@ export default function Home() {
             />
           </div>
         ))}
-        <div ref={messagesEndRef} /> {/* Scroll to bottom anchor */}
+        <div ref={messagesEndRef} />
       </div>
 
       <footer className="p-4 bg-gray-200">
@@ -377,9 +428,10 @@ export default function Home() {
           onKeyPress={handleKeyPress}
           disabled={loading || isProcessing}
         />
+        
         <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
           <button
-            onClick={startRecording}
+            onClick={prepareStartRecording}
             className={`px-3 py-2 rounded text-sm ${
               isProcessing
                 ? "bg-gray-300 text-gray-500"
@@ -389,6 +441,7 @@ export default function Home() {
           >
             {isRecording ? "Recording..." : "Start Recording"}
           </button>
+          
           <button
             onClick={stopRecording}
             className={`px-3 py-2 rounded text-sm ${
@@ -400,6 +453,7 @@ export default function Home() {
           >
             Stop Recording
           </button>
+          
           <label className="px-3 py-3 rounded bg-yellow-500 text-white text-sm">
             Upload Audio
             <input
