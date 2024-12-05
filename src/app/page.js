@@ -52,37 +52,29 @@ export default function Home() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     
-    // Trim input and check for order confirmation
     const trimmedInput = input.trim().toLowerCase();
     
-    // Check if input is empty or processing is ongoing
     if (!trimmedInput || isProcessing) return;
   
     try {
-      // Add user message to chat
       addMessage(trimmedInput, "user");
       
-      // Clear input field
       setInput("");
       
-      // Special handling for order confirmation
       if (trimmedInput === 'confirm order') {
         await confirmOrder();
         return;
       }
   
-      // Fetch AI response
       await fetchResponse(trimmedInput);
     } catch (error) {
       console.error("Error in message submission:", error);
       
-      // Add error message to chat
       addMessage(
         "Oops! Something went wrong. Please try again.",
         "system"
       );
       
-      // Restore input if needed
       setInput(trimmedInput);
     }
   };
@@ -101,17 +93,13 @@ export default function Home() {
         userMessage: userInput,
       });
   
-      // Clear typing indicator
       setMessages((prev) =>
         prev.filter((msg) => msg.text !== "WATAD Copilot is Typing...")
       );
   
-      // Add bot response
       addMessage(formatBotResponse(data.response), "assistant");
   
-      // Check if there's a pending order
       if (data.pendingOrder) {
-        // Optionally add a UI hint about pending order
         addMessage("An order is pending confirmation. Type 'Confirm Order' to proceed.", "system");
       }
   
@@ -127,14 +115,12 @@ export default function Home() {
     }
   };
   
-  // Add a new function to confirm order
   const confirmOrder = async () => {
     try {
       const { data } = await axios.post("/api/chat", {
         action: 'confirmOrder'
       });
   
-      // Show success message
       addMessage(`Order confirmed! Order ID: ${data.orderId}`, "system");
     } catch (err) {
       console.error("Error confirming order:", err);
@@ -243,17 +229,14 @@ export default function Home() {
     }
   };
 
-  // Format the response text with proper headings and newlines
   const formatBotResponse = (responseText) => {
-    // Make text between ** and ** bold
     return responseText
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") // Bold text wrapped in **
-      .replace(/\n/g, "<br/>") // Replace newlines with <br/> for HTML line breaks
-      .replace(/(Type:)/g, "<strong>$1</strong>") // Bold 'Type' label
-      .replace(/(Properties:)/g, "<strong>$1</strong>"); // Bold 'Properties' label
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>") 
+      .replace(/\n/g, "<br/>")
+      .replace(/(Type:)/g, "<strong>$1</strong>") 
+      .replace(/(Properties:)/g, "<strong>$1</strong>"); 
   };
 
-  // New method for Excel file upload and text extraction
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (file && !isProcessing) {
@@ -265,13 +248,8 @@ export default function Home() {
         const extractedText = await extractTextFromExcel(file);
 
         if (extractedText) {
-          // Convert the extracted text into an HTML table and add it as a message
           const tableHTML = convertTextToTable(extractedText);
-
-          // Add the table as a user message
           addMessage(tableHTML, "user");
-
-          // Initiate conversation with extracted text
           await fetchResponse(extractedText);
         }
       } catch (err) {
@@ -284,20 +262,17 @@ export default function Home() {
     }
   };
 
-  // Convert the extracted Excel data into an HTML table
   const convertTextToTable = (text) => {
-    const rows = text.split("\n").map((row) => row.split(" | ")); // Assuming data is separated by ' | ' in each row
+    const rows = text.split("\n").map((row) => row.split(" | ")); 
 
     let tableHTML =
       "<table class='table-auto w-full border-collapse border border-gray-300'><thead><tr>";
 
-    // Create table headers (first row)
     rows[0].forEach((cell) => {
       tableHTML += `<th class='border px-4 py-2 bg-gray-200'>${cell}</th>`;
     });
     tableHTML += "</tr></thead><tbody>";
 
-    // Create table rows
     rows.slice(1).forEach((row) => {
       tableHTML += "<tr>";
       row.forEach((cell) => {
@@ -310,7 +285,6 @@ export default function Home() {
     return tableHTML;
   };
 
-  // Text extraction from Excel
   const extractTextFromExcel = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -325,7 +299,6 @@ export default function Home() {
               header: 1,
             });
 
-            // Convert each row to a string representation
             sheetData.forEach((row) => {
               const rowText = row
                 .map((cell) => (cell !== undefined ? String(cell).trim() : ""))
@@ -368,7 +341,7 @@ export default function Home() {
             />
           </div>
         ))}
-        <div ref={messagesEndRef} /> {/* Scroll to bottom anchor */}
+        <div ref={messagesEndRef} />
       </div>
 
       <footer className="p-4 bg-gray-200">

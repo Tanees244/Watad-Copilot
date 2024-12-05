@@ -4,12 +4,11 @@ import path from "path";
 import os from "os";
 import { promisify } from "util";
 
-// Get the system temporary directory dynamically
 const tempDir = os.tmpdir();
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, tempDir); // Save files to the system's temporary directory
+    cb(null, tempDir);
   },
   filename: (req, file, cb) => {
     cb(null, `${Date.now()}-${file.originalname}`);
@@ -18,7 +17,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Wrap multer middleware to make it compatible with Next.js
 const uploadMiddleware = upload.single("audio");
 
 const runMiddleware = (req, res, fn) =>
@@ -31,7 +29,7 @@ const runMiddleware = (req, res, fn) =>
 
 export const config = {
   api: {
-    bodyParser: false, // Disable built-in body parser for file uploads
+    bodyParser: false,
   },
 };
 
@@ -68,7 +66,6 @@ async function handler(req, res) {
 
     const audioContent = fs.readFileSync(filePath, { encoding: "base64" });
 
-    // Try transcription with different sample rates
     for (const sampleRate of possibleSampleRates) {
       try {
         const requestBody = {
@@ -96,7 +93,7 @@ async function handler(req, res) {
         if (!response.ok) {
           const errorData = await response.json();
           console.log(`Attempt with ${sampleRate} Hz failed:`, errorData);
-          continue; // Try next sample rate
+          continue; 
         }
 
         const data = await response.json();
@@ -104,14 +101,12 @@ async function handler(req, res) {
           ?.map((result) => result.alternatives?.[0]?.transcript)
           .join("\n");
 
-        // If transcription is successful, return it
         if (transcription) {
-          // Cleanup: Delete temporary file after processing
           fs.unlinkSync(filePath);
 
           return res.status(200).json({ 
             transcription,
-            sampleRate: sampleRate // Optional: return which sample rate worked
+            sampleRate: sampleRate 
           });
         }
       } catch (rateError) {
@@ -120,7 +115,6 @@ async function handler(req, res) {
       }
     }
 
-    // If no sample rate worked
     return res.status(400).json({ 
       error: "Could not transcribe audio with any sample rate" 
     });
