@@ -2275,9 +2275,14 @@ Products= [
   "text": "Conversational response to user",
   "currentStep": "product_selection" | "quantity" | "delivery" | "customer_info" | "confirmation",
   "orderDetails": {
-    "product": "",
-    "quantity": 0,
-    "unit": "",
+    "products": [
+      {
+        "name": "",
+        "quantity": 0,
+        "unit": "",
+        "specifications": {} // Optional product-specific details
+      }
+    ],
     "deliveryDate": "",
     "splitOrder": false,
     "customerInfo": {
@@ -2323,7 +2328,7 @@ export default async function handler(req, res) {
       await connectMongoDB();
 
       currentOrderState.conversationHistory.push({ 
-        role: "user", 
+        role: "user",   
         parts: [{ text: userMessage }] 
       });
 
@@ -2364,35 +2369,57 @@ export default async function handler(req, res) {
       });
 
       if (parsedResponse.responseType === "final_order") {
+        const products = currentOrderState.orderDetails.products.map(product => {
+          // Merge existing specifications with additional parsed details dynamically
+          const specifications = {
+            ...(product.specifications || {}),
+          };
+      
+          // Dynamically add more details from parsed response text
+          const productText = parsedResponse.text
+            .split('\n')
+            .find(line => line.includes(product.name));
+      
+          if (productText) {
+            // Add any key-value pairs found in the product text
+            productText.split(',').forEach(detail => {
+              const [key, value] = detail.split(':').map(str => str.trim());
+              if (key && value) specifications[key] = value;
+            });
+          }
+      
+          return {
+            name: product.name,
+            quantity: product.quantity,
+            unit: product.unit || '',
+            specifications,
+            price: 0, // Optional: Add pricing logic
+          };
+        });
+      
+        // Create the new order
         const newOrder = new Order({
-          userId: req.session?.userId || "anonymous",
-          products: [ 
-            {
-              name: currentOrderState.orderDetails.product,
-              quantity: currentOrderState.orderDetails.quantity,
-              price: 0  
-            }
-          ],
-          totalAmount: 0,
-          status: "pending",
+          userId: req.session?.userId || 'anonymous',
+          products: products,
+          totalAmount: 0, // Optionally calculate price
+          status: 'pending',
           customerName: currentOrderState.orderDetails.customerInfo.name,
           customerPhone: currentOrderState.orderDetails.customerInfo.phone,
           customerAddress: currentOrderState.orderDetails.customerInfo.address,
-          additionalNotes: JSON.stringify({
-            splitOrder: currentOrderState.orderDetails.splitOrder,
-            deliveryDate: currentOrderState.orderDetails.deliveryDate
-          })
         });
-
+      
         const savedOrder = await newOrder.save();
+      
+        // Reset order state
         currentOrderState = { orderDetails: {}, conversationHistory: [] };
-
+      
         return res.status(200).json({
           response: parsedResponse.text,
-          orderId: savedOrder._id
+          orderId: savedOrder._id,
+          orderSummary: savedOrder.products, // Optionally format a summary
         });
       }
-
+      
       return res.status(200).json({ 
         response: parsedResponse.text,
         currentStep: parsedResponse.currentStep
