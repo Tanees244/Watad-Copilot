@@ -8,20 +8,48 @@ import * as XLSX from "xlsx";
 export default function Home() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [transcription, setTranscription] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tableData, setTableData] = useState([]);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  
+ // Language state with client-side localStorage handling
+ const [selectedLanguage, setSelectedLanguage] = useState('en-US');
 
-  const mediaRecorderRef = useRef(null);
-  const audioRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const excelFileInputRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
+ // Language options
+ const languageOptions = [
+   { code: "en-US", label: "English (US)" },
+   { code: "ar-SA", label: "Arabic (Saudi Arabia)" }
+ ];
+
+// Effect to save language to localStorage whenever it changes
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('selectedLanguage', selectedLanguage);
+  }
+}, [selectedLanguage]);
+
+// Effect to load language from localStorage on client-side mount
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    const storedLanguage = localStorage.getItem('selectedLanguage');
+    if (storedLanguage) {
+      setSelectedLanguage(storedLanguage);
+    }
+  }
+}, []);
+
+const mediaRecorderRef = useRef(null);
+const audioRef = useRef(null);
+const fileInputRef = useRef(null);
+const excelFileInputRef = useRef(null);
+const audioChunksRef = useRef([]);
+const messagesEndRef = useRef(null);
+const inputRef = useRef(null);
+
+  const prepareStartRecording = () => {
+    startRecording();
+  };
 
   // Autoscroll effect
   useEffect(() => {
@@ -48,6 +76,7 @@ export default function Home() {
     const newMessage = { id: Date.now(), text, type };
     setMessages((prev) => [...prev, newMessage]);
   };
+
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -78,6 +107,8 @@ export default function Home() {
       setInput(trimmedInput);
     }
   };
+
+
   const handleKeyPress = async (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -91,6 +122,7 @@ export default function Home() {
     try {
       const { data } = await axios.post("/api/chat", {
         userMessage: userInput,
+        language: selectedLanguage // Pass selected language to backend
       });
   
       setMessages((prev) =>
@@ -131,40 +163,63 @@ export default function Home() {
   const startRecording = async () => {
     if (!isProcessing) {
       try {
+        // Check for microphone permissions
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          addMessage('<span class="text-red-500">Error: Microphone access not supported</span>', "system");
+          return;
+        }
+  
         setIsProcessing(true);
         setIsRecording(true);
-
+        setError("");
+  
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
-
+  
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: "audio/webm; codecs=opus",
         });
-
+  
         audioChunksRef.current = [];
-
+  
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
             audioChunksRef.current.push(event.data);
           }
         };
-
+  
         mediaRecorder.onstop = () => {
           const audioBlob = new Blob(audioChunksRef.current, {
             type: "audio/webm; codecs=opus",
           });
-
-          handleAudioUpload(audioBlob);
-
+  
+          if (audioBlob.size > 0) {
+            handleAudioUpload(audioBlob);
+          } else {
+            addMessage('<span class="text-red-500">No audio recorded. Please try again.</span>', "system");
+          }
+  
           stream.getTracks().forEach((track) => track.stop());
         };
-
+  
         mediaRecorder.start();
         mediaRecorderRef.current = mediaRecorder;
       } catch (err) {
         console.error("Recording error:", err);
-        setError(`Microphone access failed: ${err.message}`);
+        
+        // Detailed error messages based on different scenarios
+        let errorMsg = "Microphone access failed";
+        if (err.name === "NotAllowedError") {
+          errorMsg = "Microphone permission denied. Please check your browser settings.";
+        } else if (err.name === "NotFoundError") {
+          errorMsg = "No microphone found. Please connect a microphone.";
+        }
+  
+        // Add error to chat and error state
+        addMessage(`<span class="text-red-500">Recording Error: ${errorMsg}</span>`, "system");
+        setError(errorMsg);
+        
         setIsProcessing(false);
         setIsRecording(false);
       }
@@ -187,20 +242,23 @@ export default function Home() {
     }
   };
 
+
   const handleAudioUpload = async (audioData) => {
     setLoading(true);
     setError("");
     addMessage("Uploading audio...", "user");
-
+  
     try {
       const formData = new FormData();
       formData.append("audio", audioData, "recording.opus");
-
+      formData.append("language", selectedLanguage);
+  
       console.log("Uploading Audio:", {
         type: audioData.type,
         size: audioData.size,
+        language: selectedLanguage
       });
-
+  
       const { data } = await axios.post("/api/transcribe", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
@@ -208,9 +266,8 @@ export default function Home() {
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
       });
-
+  
       if (data.transcription) {
-        setTranscription(data.transcription);
         addMessage(data.transcription, "user");
         await fetchResponse(data.transcription);
       } else {
@@ -218,16 +275,19 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Full upload error:", err.response?.data || err);
-      setError(
-        `Failed to process the audio: ${
-          err.response?.data?.error || err.message
-        }`
-      );
+      const errorMessage = err.response?.data?.error || err.message || "Unknown error";
+      
+      // Add error message to chat with red color
+      addMessage(`<span class="text-red-500">Audio Upload Error: ${errorMessage}</span>`, "system");
+      
+      // Set more detailed error state
+      setError(errorMessage);
     } finally {
       setLoading(false);
       setIsProcessing(false);
     }
   };
+  
 
   const formatBotResponse = (responseText) => {
     return responseText
@@ -320,9 +380,23 @@ export default function Home() {
 
   return (
     <main className="fixed h-full w-full bg-gray-50 flex flex-col">
-      <header className="bg-black text-white p-4 text-center">
-        <h1 className="text-2xl font-bold">WATAD Copilot</h1>
-      </header>
+    <header className="bg-black text-white p-4 flex justify-between items-center">
+      <h1 className="text-2xl font-bold">WATAD Copilot</h1>
+      <div>
+        <select
+          value={selectedLanguage}
+          onChange={(e) => setSelectedLanguage(e.target.value)}
+          className="px-2 py-1 rounded bg-white text-black"
+        >
+          {languageOptions.map((lang) => (
+            <option key={lang.code} value={lang.code}>
+              {lang.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </header>
+
       <div className="flex-1 overflow-y-auto p-4">
         {messages.map((msg) => (
           <div
@@ -354,9 +428,10 @@ export default function Home() {
           onKeyPress={handleKeyPress}
           disabled={loading || isProcessing}
         />
+        
         <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
           <button
-            onClick={startRecording}
+            onClick={prepareStartRecording}
             className={`px-3 py-2 rounded text-sm ${
               isProcessing
                 ? "bg-gray-300 text-gray-500"
@@ -366,6 +441,7 @@ export default function Home() {
           >
             {isRecording ? "Recording..." : "Start Recording"}
           </button>
+          
           <button
             onClick={stopRecording}
             className={`px-3 py-2 rounded text-sm ${
@@ -377,6 +453,7 @@ export default function Home() {
           >
             Stop Recording
           </button>
+          
           <label className="px-3 py-3 rounded bg-yellow-500 text-white text-sm">
             Upload Audio
             <input

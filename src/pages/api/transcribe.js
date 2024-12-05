@@ -1,3 +1,5 @@
+//src/pages/api/transcribe.js
+
 import multer from "multer";
 import fs from "fs";
 import path from "path";
@@ -24,6 +26,8 @@ const runMiddleware = (req, res, fn) =>
     fn(req, res, (err) => {
       if (err) return reject(err);
       resolve();
+
+      
     });
   });
 
@@ -43,6 +47,9 @@ async function handler(req, res) {
   try {
     await runMiddleware(req, res, uploadMiddleware);
     const file = req.file;
+    
+    // Extract language from form data or use default
+    const language = req.body.language || 'en-US';
 
     if (!file) {
       return res.status(400).json({ error: "No audio file provided" });
@@ -72,7 +79,7 @@ async function handler(req, res) {
           config: {
             encoding,
             sampleRateHertz: sampleRate,
-            languageCode: "en-US",
+            languageCode: language, // Use selected language
           },
           audio: {
             content: audioContent,
@@ -106,7 +113,8 @@ async function handler(req, res) {
 
           return res.status(200).json({ 
             transcription,
-            sampleRate: sampleRate 
+            sampleRate: sampleRate,
+            language: language
           });
         }
       } catch (rateError) {
