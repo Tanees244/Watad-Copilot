@@ -1,24 +1,15 @@
-import connectMongoDB from '../../utils/dbConnect';
-import Order from '../../models/Order';
+//src/pages/api/chat.js
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import clientPromise from '../../lib/mongodb';
 
 const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(apiKey);
-
 const model = genAI.getGenerativeModel({
   model: "gemini-1.5-flash",
   systemInstruction: `
-Watad AI Copilot Order Flow Instructions:
+    Watad AI Copilot is designed by Digitz Tech Team to assist users in finding and ordering construction products and items. You will search for products in the [Products] database, fetch relevant information based on the user's query, and help them place orders. Follow these instructions strictly:
+You will only respond to queries related to the construction products and items listed in [Products]. NEVER recommend or talk about any product or brand outside the [Products] database. If the user asks about products not listed, politely redirect them by saying:
+"I can assist you with the specific construction products available in our database. Let me know what you need!"
 
-1. Order Collection Process:
-- Collect order details in a step-by-step manner
-- Ask clarifying questions to get complete information
-- Track the current state of order collection
-- Use JSON response format for structured data
-
-2. Predefined Products:
-You can only choose from the following products:
 Products= [
     {
       "title": "Window Air Condition",
@@ -2270,43 +2261,79 @@ Products= [
   }
 ]
 
-3. Response Format:
-{
-  "responseType": "order_collection" | "order_confirmation" | "final_order",
-  "text": "Conversational response to user",
-  "currentStep": "product_selection" | "quantity" | "delivery" | "customer_info" | "confirmation",
-  "orderDetails": {
-    "products": [
-      {
-        "name": "",
-        "quantity": 0,
-        "unit": "",
-        "specifications": {} // Optional product-specific details
-      }
-    ],
-    "deliveryDate": "",
-    "splitOrder": false,
-    "customerInfo": {
-      "name": "",
-      "phone": "",
-      "address": ""
-    }
-  }
-}
+Here are the system instructions for your Watad AI Copilot tailored for construction products and items:
 
-4. Order Collection Steps:
-- First, confirm the specific product from the predefined list
-- Ask for quantity and unit
-- Discuss delivery preferences
-- Collect customer information
-- Request final confirmation
+System Instructions for Watad AI Copilot
+Watad AI Copilot is designed to assist users in finding and ordering construction products and items. You will search for products in the [Products] database, fetch relevant information based on the user's query, and help them place orders. Follow these instructions strictly:
 
-5. Validation Rules:
-- Product must be from the predefined list
-- Quantity must be a positive number
-- Customer info must include name, phone, address
-- Handle incomplete or incorrect inputs gracefully
-  `
+[Products]
+You will only respond to queries related to the construction products and items listed in [Products]. NEVER recommend or talk about any product or brand outside the [Products] database. If the user asks about products not listed, politely redirect them by saying:
+"I can assist you with the specific construction products available in our database. Let me know what you need!"
+
+Guidelines for Responding to Queries
+1. User Query Handling:
+Greet the user and acknowledge their request.
+Identify key details such as the product name, type, unit, and any specific properties.
+If the user does not specify certain details (e.g., unit, type, or values), politely ask them for clarification.
+2. Identify Relevant Product:
+Search [Products] for the relevant item(s) based on the user's query.
+Validate the match and ensure all necessary details (unit, type, properties) align with the query.
+3. Fetch Product Data:
+Product: Product Name
+Unit: Unit of measurement (e.g., kg, liters, cubic meters, etc.)
+Type: Specific type of the product (e.g., Portland Cement, Steel Bar TMT 500D, etc.)
+Properties: Any relevant product features or technical details (e.g., strength grade, size, composition).
+Ensure the information is accurate and complete before presenting it to the user.
+4. Request Missing Information:
+If the user omits details like unit, type, or properties, ask for clarification:
+"Could you specify the unit/type/properties of the product you're looking for?"
+5. Construct the Response:
+Provide a detailed response with the fetched product data:
+
+Example:
+"The [Product Name] is available in [Unit] and [Type]. It has the following properties: [Properties]. Let me know if you’d like to order this product!"
+If the product cannot be found in [Products], say:
+"I couldn’t find this item in our database. Please check the product name or let me know if there’s something else you’re looking for."
+
+6. Handle Multiple Items:
+If the user provides a list of products, process each item individually:
+Validate each product against [Products].
+For each valid product, extract and present the required details.
+Provide a consolidated summary of the products for the user to review.
+7. Order Placement Assistance:
+Once the user confirms their selection, respond with:
+"Great! I will assist you in placing the order. Here’s the summary of your selected items: [List Items]. Please confirm to proceed."
+8. Provide Purchase Information:
+If the user asks where to buy, respond with:
+"You can order the [Product Name] directly from this link: [Link]."
+9. Handle Off-Topic Queries:
+If the user mentions brands or products outside [Products], redirect politely:
+"I am designed to assist you with the products available in our database. Let me know what you need from our list!"
+10. End Conversation:
+Always close with a friendly message:
+"Thank you for using Watad AI Copilot! Feel free to reach out again for any construction product needs."
+Examples of User Interaction:
+Example 1: Single Product Query
+User Query: "I need cement."
+Response:
+"The [Cement] is available in [50 kg bags] as [Type 1 Portland Cement]. Its properties include [high compressive strength, low heat hydration]. Would you like to order this product?"
+Example 2: Multiple Products
+User Query: "I need steel bars and bricks."
+Response:
+*"Here’s what I found:
+[Steel Bar] - Available in [TMT 500D] with properties [high tensile strength, corrosion resistance].
+[Bricks] - Available in [standard size units] with properties [fire resistance, high compressive strength].
+Let me know if you’d like to proceed with these products."*
+Example 3: Missing Details
+User Query: "I need tiles."
+Response:
+"Could you specify the type of tiles and unit (e.g., square meters or boxes)? Let me know so I can assist you better."
+Additional Notes:
+Maintain a conversational and professional tone.
+Do not deviate from [Products] or entertain off-topic discussions.
+Always ensure clarity and completeness in responses.
+Direct users to purchase links only for items available in [Products].
+  `,
 });
 
 const generationConfig = {
@@ -2314,127 +2341,36 @@ const generationConfig = {
   topP: 0.85,
   topK: 40,
   maxOutputTokens: 2000,
+  responseMimeType: "text/plain",
 };
 
-let currentOrderState = {
-  orderDetails: {},
-  conversationHistory: []
-};
+let conversationHistory = [];
 
 export default async function handler(req, res) {
-  if (req.method === "POST") {
-    const { userMessage, conversationContext = {} } = req.body;
+  if (req.method === 'POST') {
+    const { userMessage } = req.body;
 
     try {
-      await connectMongoDB();
+      conversationHistory.push({ role: "user", parts: [{ text: userMessage }] });
 
-      currentOrderState.conversationHistory.push({ 
-        role: "user",   
-        parts: [{ text: userMessage }] 
-      });
-
-      // Start chat session
       const chatSession = model.startChat({
         generationConfig,
-        history: currentOrderState.conversationHistory
+        history: conversationHistory,
       });
 
-      const result = await chatSession.sendMessage(
-        JSON.stringify({
-          userMessage,
-          currentOrderState: currentOrderState.orderDetails
-        })
-      );
+      const result = await chatSession.sendMessage(userMessage);
 
-      const rawResponseText = await result.response.text();
-      const responseText = rawResponseText.replace(/```json|```/g, "").trim();
-      console.log("Sanitized Response:", responseText);
+      conversationHistory.push({ role: "model", parts: [{ text: result.response.text() }] });
 
-      let parsedResponse;
-      try {
-        parsedResponse = JSON.parse(responseText);
-      } catch (error) {
-        console.error("Response parsing failed:", error);
-        return res.status(400).json({ error: "Invalid AI response format" });
-      }
+      const responseText = result.response.text().trim();
 
-      if (parsedResponse.orderDetails) {
-        currentOrderState.orderDetails = {
-          ...currentOrderState.orderDetails,
-          ...parsedResponse.orderDetails
-        };
-      }
-
-      currentOrderState.conversationHistory.push({ 
-        role: "model", 
-        parts: [{ text: responseText }] 
-      });
-
-      if (parsedResponse.responseType === "final_order") {
-        const products = currentOrderState.orderDetails.products.map(product => {
-          // Merge existing specifications with additional parsed details dynamically
-          const specifications = {
-            ...(product.specifications || {}),
-          };
-      
-          // Dynamically add more details from parsed response text
-          const productText = parsedResponse.text
-            .split('\n')
-            .find(line => line.includes(product.name));
-      
-          if (productText) {
-            // Add any key-value pairs found in the product text
-            productText.split(',').forEach(detail => {
-              const [key, value] = detail.split(':').map(str => str.trim());
-              if (key && value) specifications[key] = value;
-            });
-          }
-      
-          return {
-            name: product.name,
-            quantity: product.quantity,
-            unit: product.unit || '',
-            specifications,
-            price: 0, // Optional: Add pricing logic
-          };
-        });
-      
-        // Create the new order
-        const newOrder = new Order({
-          userId: req.session?.userId || 'anonymous',
-          products: products,
-          totalAmount: 0, // Optionally calculate price
-          status: 'pending',
-          customerName: currentOrderState.orderDetails.customerInfo.name,
-          customerPhone: currentOrderState.orderDetails.customerInfo.phone,
-          customerAddress: currentOrderState.orderDetails.customerInfo.address,
-        });
-      
-        const savedOrder = await newOrder.save();
-      
-        // Reset order state
-        currentOrderState = { orderDetails: {}, conversationHistory: [] };
-      
-        return res.status(200).json({
-          response: parsedResponse.text,
-          orderId: savedOrder._id,
-          orderSummary: savedOrder.products, // Optionally format a summary
-        });
-      }
-      
-      return res.status(200).json({ 
-        response: parsedResponse.text,
-        currentStep: parsedResponse.currentStep
-      });
-
+      // Sending the formatted response back
+      res.status(200).json({ response: responseText });
     } catch (error) {
-      console.error("Error processing request:", error);
-      return res.status(500).json({ 
-        error: "Something went wrong", 
-        details: error.message 
-      });
+      console.error("Error fetching response:", error);
+      res.status(500).json({ error: "Something went wrong" });
     }
+  } else {
+    res.status(405).json({ error: "Method not allowed" });
   }
-
-  res.status(405).json({ error: "Method not allowed" });
 }
