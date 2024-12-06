@@ -2363,119 +2363,181 @@ let currentOrderState = {
 };
 
 export default async function handler(req, res) {
-  if (req.method === "POST") {
-    const { userMessage, conversationContext = {} } = req.body;
+  // Logging function for consistent error tracking
+  const logError = (errorType, error, additionalContext = {}) => {
+    console.error(`[${errorType} Error]`, {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+      ...additionalContext
+    });
+  };
 
+  // Validate API prerequisites
+  if (!apiKey) {
+    logError('Configuration', new Error('Gemini API Key is missing'), {
+      environment: process.env.NODE_ENV
+    });
+    return res.status(500).json({ 
+      error: "Configuration Error", 
+      details: "Gemini API key is not configured" 
+    });
+  }
+
+  if (!model) {
+    logError('Initialization', new Error('Gemini AI model could not be initialized'), {
+      apiKeyPresent: !!apiKey
+    });
+    return res.status(500).json({ 
+      error: "Initialization Error", 
+      details: "Could not create Gemini AI model" 
+    });
+  }
+
+  // Only handle POST requests
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { userMessage, conversationContext = {} } = req.body;
+
+  try {
+    // Ensure MongoDB connection
+    await connectMongoDB();
+
+    // Update conversation history
+    currentOrderState.conversationHistory.push({ 
+      role: "user",   
+      parts: [{ text: userMessage }] 
+    });
+
+    // Start chat session with error handling
+    let chatSession;
     try {
-      await connectMongoDB();
-
-      currentOrderState.conversationHistory.push({ 
-        role: "user",   
-        parts: [{ text: userMessage }] 
-      });
-
-      // Start chat session
-      const chatSession = model.startChat({
+      chatSession = model.startChat({
         generationConfig,
         history: currentOrderState.conversationHistory
       });
+    } catch (sessionError) {
+      logError('Chat Session', sessionError, {
+        historyLength: currentOrderState.conversationHistory.length
+      });
+      return res.status(500).json({ 
+        error: "Chat Session Error", 
+        details: "Could not start chat session" 
+      });
+    }
 
-      const result = await chatSession.sendMessage(
+    // Send message and handle response
+    let result;
+    try {
+      result = await chatSession.sendMessage(
         JSON.stringify({
           userMessage,
           currentOrderState: currentOrderState.orderDetails
         })
       );
-
-      const rawResponseText = await result.response.text();
-      const responseText = rawResponseText.replace(/```json|```/g, "").trim();
-      console.log("Sanitized Response:", responseText);
-
-      let parsedResponse;
-      try {
-        parsedResponse = JSON.parse(responseText);
-      } catch (error) {
-        console.error("Response parsing failed:", error);
-        return res.status(400).json({ error: "Invalid AI response format" });
-      }
-
-      if (parsedResponse.orderDetails) {
-        currentOrderState.orderDetails = {
-          ...currentOrderState.orderDetails,
-          ...parsedResponse.orderDetails
-        };
-      }
-
-      currentOrderState.conversationHistory.push({ 
-        role: "model", 
-        parts: [{ text: responseText }] 
+    } catch (sendError) {
+      logError('Message Send', sendError, {
+        messageLength: userMessage.length
       });
-
-      if (parsedResponse.responseType === "final_order") {
-        const products = currentOrderState.orderDetails.products.map(product => {
-          // Merge existing specifications with additional parsed details dynamically
-          const specifications = {
-            ...(product.specifications || {}),
-          };
-      
-          // Dynamically add more details from parsed response text
-          const productText = parsedResponse.text
-            .split('\n')
-            .find(line => line.includes(product.name));
-      
-          if (productText) {
-            // Add any key-value pairs found in the product text
-            productText.split(',').forEach(detail => {
-              const [key, value] = detail.split(':').map(str => str.trim());
-              if (key && value) specifications[key] = value;
-            });
-          }
-      
-          return {
-            name: product.name,
-            quantity: product.quantity,
-            unit: product.unit || '',
-            specifications,
-            price: 0, // Optional: Add pricing logic
-          };
-        });
-      
-        // Create the new order
-        const newOrder = new Order({
-          userId: req.session?.userId || 'anonymous',
-          products: products,
-          totalAmount: 0, // Optionally calculate price
-          status: 'pending',
-          customerName: currentOrderState.orderDetails.customerInfo.name,
-          customerPhone: currentOrderState.orderDetails.customerInfo.phone,
-          customerAddress: currentOrderState.orderDetails.customerInfo.address,
-        });
-      
-        const savedOrder = await newOrder.save();
-      
-        // Reset order state
-        currentOrderState = { orderDetails: {}, conversationHistory: [] };
-      
-        return res.status(200).json({
-          response: parsedResponse.text,
-          orderId: savedOrder._id,
-          orderSummary: savedOrder.products, // Optionally format a summary
-        });
-      }
-      
-      return res.status(200).json({ 
-        response: parsedResponse.text,
-        currentStep: parsedResponse.currentStep
-      });
-
-    } catch (error) {
-      console.error("Error processing request:", error);
       return res.status(500).json({ 
-        error: "Something went wrong", 
-        details: error.message 
+        error: "Message Send Error", 
+        details: "Failed to send message to Gemini AI" 
       });
     }
-  }
 
-  res.status(405).json({ error: "Method not allowed" });
+    // Process response text
+    const rawResponseText = await result.response.text();
+    const responseText = rawResponseText.replace(/```json|```/g, "").trim();
+    console.log("Sanitized Response:", responseText);
+
+    // Parse response with robust error handling
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch (parseError) {
+      logError('Response Parsing', parseError, {
+        rawResponseText,
+        responseLength: responseText.length
+      });
+      return res.status(400).json({ 
+        error: "Response Parsing Error", 
+        details: "Invalid AI response format" 
+      });
+    }
+
+    // Update order details if present
+    if (parsedResponse.orderDetails) {
+      currentOrderState.orderDetails = {
+        ...currentOrderState.orderDetails,
+        ...parsedResponse.orderDetails
+      };
+    }
+
+    // Add model response to conversation history
+    currentOrderState.conversationHistory.push({ 
+      role: "model", 
+      parts: [{ text: responseText }] 
+    });
+
+    // Handle final order submission
+    if (parsedResponse.responseType === "final_order") {
+      const products = currentOrderState.orderDetails.products.map(product => ({
+        name: product.name,
+        quantity: product.quantity,
+        unit: product.unit || '',
+        specifications: product.specifications || {},
+        price: 0, // Optional: Add pricing logic
+      }));
+
+      // Create new order
+      const newOrder = new Order({
+        userId: req.session?.userId || 'anonymous',
+        products: products,
+        totalAmount: 0,
+        status: 'pending',
+        customerName: currentOrderState.orderDetails.customerInfo?.name || '',
+        customerPhone: currentOrderState.orderDetails.customerInfo?.phone || '',
+        customerAddress: currentOrderState.orderDetails.customerInfo?.address || '',
+      });
+
+      // Save order with error handling
+      let savedOrder;
+      try {
+        savedOrder = await newOrder.save();
+      } catch (saveError) {
+        logError('Order Save', saveError, {
+          productCount: products.length
+        });
+        return res.status(500).json({ 
+          error: "Order Save Error", 
+          details: "Could not save order to database" 
+        });
+      }
+
+      // Reset order state
+      currentOrderState = { orderDetails: {}, conversationHistory: [] };
+
+      return res.status(200).json({
+        response: parsedResponse.text,
+        orderId: savedOrder._id,
+        orderSummary: savedOrder.products,
+      });
+    }
+    
+    // Return response for ongoing order collection
+    return res.status(200).json({ 
+      response: parsedResponse.text,
+      currentStep: parsedResponse.currentStep
+    });
+
+  } catch (error) {
+    // Catch-all error handler
+    logError('Unhandled', error);
+    return res.status(500).json({ 
+      error: "Unexpected Server Error", 
+      details: error.message 
+    });
+  }
 }

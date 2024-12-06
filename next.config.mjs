@@ -1,17 +1,25 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    // Ensure environment variables are exposed to the browser
-    env: {
-      NEXT_PUBLIC_GEMINI_API_KEY: process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+    // Increase server-side rendering timeout
+    httpAgentOptions: {
+      keepAlive: true,
     },
     
-    // Optional: Add webpack configuration if needed
+    // Webpack configuration
     webpack: (config, { isServer }) => {
-      // Add any specific webpack configurations
+      // Increase timeout for server-side requests
+      if (isServer) {
+        config.resolve.fallback = { fs: false, net: false, tls: false };
+      }
       return config;
     },
   
-    // Ensure proper output for Amplify deployment
+    // Environment variables
+    env: {
+      NEXT_PUBLIC_GEMINI_API_KEY: process.env.NEXT_PUBLIC_GEMINI_API_KEY,
+    },
+  
+    // Deployment output
     output: 'standalone'
   };
   
